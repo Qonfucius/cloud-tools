@@ -1,0 +1,94 @@
+---
+- hosts: localhost
+  vars:
+    SUPERVISOR_DIR: "/etc/supervisor"
+    SUPERVISOR_CONF_DIR: "{{ SUPERVISOR_DIR }}/conf.d"
+    CONSUL_USER: "consul"
+    SYSTEM_BIN_DIR: "/usr/local/bin"
+    CONSUL_DIR: "/opt/consul"
+    CONSUL_DIR_BIN: "{{CONSUL_DIR}}/bin"
+    CONSUL_DIR_BIN_CONSUL: "{{CONSUL_DIR_BIN}}/consul"
+    CONSUL_DIR_BIN_RUN_CONSUL: "{{CONSUL_DIR_BIN}}/run-consul"
+    CONSUL_VERSION: "1.1.0"
+    CONSUL_PLATEFORM: "linux"
+    CONSUL_ARCH: "amd64"
+    CONSUL_DOWNLOAD_URL: "https://releases.hashicorp.com/consul/{{CONSUL_VERSION}}/consul_{{CONSUL_VERSION}}_{{CONSUL_PLATEFORM}}_{{CONSUL_ARCH}}.zip"
+    METADATA_URL: "http://169.254.42.42"
+  tasks:
+    - name: "Upgrade package manager"
+      apt: upgrade=dist
+
+    - name: "Install list of packages"
+      apt: name={{item}} state=present
+      with_items:
+        - curl
+        - unzip
+        - jq
+        - supervisor
+
+    - name: "Create directory if they don't exist"
+      file:
+        path: "{{ SUPERVISOR_CONF_DIR }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0775
+
+    - name: "Copy supervisor config"
+      template:
+        src: "./consul/supervisor.conf.j2"
+        dest: "{{ SUPERVISOR_CONF_DIR }}/supervisor.conf"
+
+    - name: "Enable supervisor service"
+      service: name=supervisor enabled=yes
+
+    - name: "Start supervisor service"
+      service: name=supervisor state=started
+
+    - name: "Create user"
+      user:
+        name: "{{CONSUL_USER}}"
+        state: present
+
+    - name: "Create directory if they don't exist"
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{CONSUL_USER}}"
+        group: "{{CONSUL_USER}}"
+        mode: 0775
+      with_items:
+        - "{{ CONSUL_DIR_BIN }}"
+        - "{{ CONSUL_DIR }}/config"
+        - "{{ CONSUL_DIR }}/data"
+        - "{{ CONSUL_DIR }}/log"
+        - "{{ CONSUL_DIR }}/tls"
+        - "{{ CONSUL_DIR }}/tls/ca"
+
+    - name: "Unarchive consul"
+      unarchive:
+        src: "{{CONSUL_DOWNLOAD_URL}}"
+        dest: "/tmp"
+        remote_src: yes
+
+    - name: "Copy consul"
+      copy:
+        src: "/tmp/consul"
+        dest: "{{CONSUL_DIR_BIN_CONSUL}}"
+        owner: "{{CONSUL_USER}}"
+        group: "{{CONSUL_USER}}"
+        mode: 0744
+
+    - name: "Create consul symlink"
+      file:
+        src: "{{CONSUL_DIR_BIN_CONSUL}}"
+        dest: "{{SYSTEM_BIN_DIR}}/consul"
+        state: link
+
+    - name: "Copy run-consul config"
+      template:
+        src: "./consul/run-consul.j2"
+        dest: "{{ CONSUL_DIR_BIN_RUN_CONSUL }}"
+        owner: "{{CONSUL_USER}}"
+        group: "{{CONSUL_USER}}"
+        mode: 0744

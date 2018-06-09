@@ -1,0 +1,363 @@
+#!/bin/bash
+# This script is used to configure and run Consul on an AWS server.
+
+set -e
+
+readonly CONSUL_CONFIG_FILE="default.json"
+readonly SUPERVISOR_CONFIG_PATH="{{SUPERVISOR_CONF_DIR}}/run-consul.conf"
+
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_NAME="$(basename "$0")"
+
+readonly MAX_RETRIES=30
+readonly SLEEP_BETWEEN_RETRIES_SEC=10
+
+function print_usage {
+  echo
+  echo "Usage: run-consul [OPTIONS]"
+  echo
+  echo "This script is used to configure and run Consul on an AWS server."
+  echo
+  echo "Options:"
+  echo
+  echo -e "  --server\t\tIf set, run in server mode. Optional. Exactly one of --server or --client must be set."
+  echo -e "  --client\t\tIf set, run in client mode. Optional. Exactly one of --server or --client must be set."
+  echo -e "  --cluster-tag\tAutomatically form a cluster with Instances that have this tag key and the tag value in --cluster-tag-value. Optional."
+  echo -e "  --cluster-size\tThe size of the cluster for bootstrapping"
+  echo -e "  --organization\tThe name of the organization where Consul is running in."
+  echo -e "  --token\tThe token of the organization"
+  echo -e "  --config-dir\t\tThe path to the Consul config folder. Optional. Default is the absolute path of '../config', relative to this script."
+  echo -e "  --data-dir\t\tThe path to the Consul data folder. Optional. Default is the absolute path of '../data', relative to this script."
+  echo -e "  --log-dir\t\tThe path to the Consul log folder. Optional. Default is the absolute path of '../log', relative to this script."
+  echo -e "  --bin-dir\t\tThe path to the folder with Consul binary. Optional. Default is the absolute path of the parent folder of this script."
+  echo -e "  --user\t\tThe user to run Consul as. Optional. Default is to use the owner of --config-dir."
+  echo -e "  --skip-consul-config\tIf this flag is set, don't generate a Consul configuration file. Optional. Default is false."
+  echo
+  echo "Example:"
+  echo
+  echo "  run-consul --server --config-dir /custom/path/to/consul/config"
+}
+
+function log {
+  local readonly level="$1"
+  local readonly message="$2"
+  local readonly timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  >&2 echo -e "${timestamp} [${level}] [$SCRIPT_NAME] ${message}"
+}
+
+function log_info {
+  local readonly message="$1"
+  log "INFO" "$message"
+}
+
+function log_warn {
+  local readonly message="$1"
+  log "WARN" "$message"
+}
+
+function log_error {
+  local readonly message="$1"
+  log "ERROR" "$message"
+}
+
+# Based on code from: http://stackoverflow.com/a/16623897/483528
+function strip_prefix {
+  local readonly str="$1"
+  local readonly prefix="$2"
+  echo "${str#$prefix}"
+}
+
+function assert_not_empty {
+  local readonly arg_name="$1"
+  local readonly arg_value="$2"
+
+  if [[ -z "$arg_value" ]]; then
+    log_error "The value for '$arg_name' cannot be empty"
+    print_usage
+    exit 1
+  fi
+}
+
+function get_instance_ip_address {
+  scw-metadata PRIVATE_IP
+}
+
+function get_instance_id {
+  scw-metadata ID
+}
+
+function get_instance_region {
+  scw-metadata LOCATION_ZONE_ID
+}
+
+function get_instance_tags {
+  local readonly instance_id="$1"
+  local readonly instance_region="$2"
+  local tags=""
+  local count_tags=""
+
+  log_info "Looking up tags for Instance $instance_id in $instance_region"
+  for (( i=1; i<="$MAX_RETRIES"; i++ )); do
+    tags=$(scw-server-tags)
+    count_tags=$(scw-metadata TAGS)
+    if [[ "$count_tags" -gt 0 ]]; then
+      log_info "This Instance $instance_id in $instance_region has Tags."
+      echo "$tags"
+      return
+    else
+      log_warn "This Instance $instance_id in $instance_region does not have any Tags."
+      log_warn "Will sleep for $SLEEP_BETWEEN_RETRIES_SEC seconds and try again."
+      sleep "$SLEEP_BETWEEN_RETRIES_SEC"
+    fi
+  done
+
+  log_error "Could not find Instance Tags for $instance_id in $instance_region after $MAX_RETRIES retries."
+  exit 1
+}
+
+# Get the value for a specific tag from the tags JSON returned by the AWS describe-tags:
+# https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-tags.html
+function get_tag_value {
+  local readonly tags="$1"
+  local readonly tag_key="$2"
+
+  echo "$tags" | jq -r ".Tags[] | select(.Key == \"$tag_key\") | .Value"
+}
+
+function assert_is_installed {
+  local readonly name="$1"
+
+  if [[ ! $(command -v ${name}) ]]; then
+    log_error "The binary '$name' is required by this script but is not installed or in the system's PATH."
+    exit 1
+  fi
+}
+
+function generate_consul_config {
+  local readonly server="${1}"
+  local readonly config_dir="${2}"
+  local readonly user="${3}"
+  local readonly cluster_tag="${4}"
+  local readonly cluster_size="${5}"
+  local readonly organization="${6}"
+  local readonly token="${7}"
+  local readonly datacenter="${8}"
+  local readonly config_path="$config_dir/$CONSUL_CONFIG_FILE"
+
+  local instance_id=""
+  local instance_ip_address=""
+  local instance_region=""
+
+  instance_id=$(get_instance_id)
+  instance_ip_address=$(get_instance_ip_address)
+  instance_region=$(get_instance_region)
+
+  local retry_join_json=""
+  if [[ -z "$cluster_tag" ]]; then
+    log_warn "Cluster tag key ($cluster_tag) is empty. Will not automatically try to form a cluster based on tags."
+  else
+    retry_join_json=$(cat <<EOF
+"retry_join": ["provider=scaleway region=$instance_region organization=$organization token=$token tag_name=$cluster_tag"],
+EOF
+)
+  fi
+
+  local bootstrap_expect=""
+  if [[ "$server" == "true" ]]; then
+    local instance_tags=""
+
+    instance_tags=$(get_instance_tags "$instance_id" "$instance_region")
+
+    bootstrap_expect="\"bootstrap_expect\": $cluster_size,"
+  fi
+
+  log_info "Creating default Consul configuration"
+  local default_config_json=$(cat <<EOF
+{
+  "advertise_addr": "$instance_ip_address",
+  "bind_addr": "$instance_ip_address",
+  $bootstrap_expect
+  "client_addr": "0.0.0.0",
+  "datacenter": "$datacenter",
+  "node_name": "$instance_id",
+  $retry_join_json
+  "server": $server,
+  "ui": false
+}
+EOF
+)
+  log_info "Installing Consul config file in $config_path"
+  echo "$default_config_json" | jq '.' > "$config_path"
+  chown "$user:$user" "$config_path"
+}
+
+function generate_supervisor_config {
+  local readonly supervisor_config_path="$1"
+  local readonly consul_config_dir="$2"
+  local readonly consul_data_dir="$3"
+  local readonly consul_log_dir="$4"
+  local readonly consul_bin_dir="$5"
+  local readonly consul_user="$6"
+
+  log_info "Creating Supervisor config file to run Consul in $supervisor_config_path"
+  cat > "$supervisor_config_path" <<EOF
+[program:consul]
+command=$consul_bin_dir/consul agent -config-dir $consul_config_dir -data-dir $consul_data_dir
+stdout_logfile=$consul_log_dir/consul-stdout.log
+stderr_logfile=$consul_log_dir/consul-error.log
+numprocs=1
+autostart=true
+autorestart=true
+stopsignal=INT
+user=$consul_user
+EOF
+}
+
+function start_consul {
+  log_info "Reloading Supervisor config and starting Consul"
+
+  supervisorctl reread
+  supervisorctl update
+}
+
+# Based on: http://unix.stackexchange.com/a/7732/215969
+function get_owner_of_path {
+  local readonly path="$1"
+  ls -ld "$path" | awk '{print $3}'
+}
+
+function run {
+  local server="false"
+  local client="false"
+  local config_dir=""
+  local data_dir=""
+  local log_dir=""
+  local bin_dir=""
+  local user=""
+  local cluster_tag=""
+  local cluster_size=""
+  local organization=""
+  local token=""
+  local datacenter=""
+  local skip_consul_config="false"
+  local all_args=()
+
+  while [[ $# > 0 ]]; do
+    local key="$1"
+
+    case "$key" in
+      --server)
+        server="true"
+        ;;
+      --client)
+        client="true"
+        ;;
+      --config-dir)
+        assert_not_empty "$key" "$2"
+        config_dir="$2"
+        shift
+        ;;
+      --data-dir)
+        assert_not_empty "$key" "$2"
+        data_dir="$2"
+        shift
+        ;;
+      --log-dir)
+        assert_not_empty "$key" "$2"
+        log_dir="$2"
+        shift
+        ;;
+      --bin-dir)
+        assert_not_empty "$key" "$2"
+        bin_dir="$2"
+        shift
+        ;;
+      --user)
+        assert_not_empty "$key" "$2"
+        user="$2"
+        shift
+        ;;
+      --cluster-tag)
+        assert_not_empty "$key" "$2"
+        cluster_tag="$2"
+        shift
+        ;;
+      --cluster-size)
+        assert_not_empty "$key" "$2"
+        cluster_size="$2"
+        shift
+        ;;
+      --organization)
+        assert_not_empty "$key" "$2"
+        organization="$2"
+        shift
+        ;;
+      --token)
+        assert_not_empty "$key" "$2"
+        token="$2"
+        shift
+        ;;
+      --skip-consul-config)
+        skip_consul_config="true"
+        ;;
+      --help)
+        print_usage
+        exit
+        ;;
+      *)
+        log_error "Unrecognized argument: $key"
+        print_usage
+        exit 1
+        ;;
+    esac
+
+    shift
+  done
+
+  if [[ ("$server" == "true" && "$client" == "true") || ("$server" == "false" && "$client" == "false") ]]; then
+    log_error "Exactly one of --server or --client must be set."
+    exit 1
+  fi
+
+  assert_is_installed "supervisorctl"
+  assert_is_installed "scw-metadata"
+  assert_is_installed "scw-server-tags"
+  assert_is_installed "curl"
+  assert_is_installed "jq"
+
+  if [[ -z "$config_dir" ]]; then
+    config_dir=$(cd "$SCRIPT_DIR/../config" && pwd)
+  fi
+
+  if [[ -z "$data_dir" ]]; then
+    data_dir=$(cd "$SCRIPT_DIR/../data" && pwd)
+  fi
+
+  if [[ -z "$log_dir" ]]; then
+    log_dir=$(cd "$SCRIPT_DIR/../log" && pwd)
+  fi
+
+  if [[ -z "$bin_dir" ]]; then
+    bin_dir=$(cd "$SCRIPT_DIR/../bin" && pwd)
+  fi
+
+  if [[ -z "$user" ]]; then
+    user=$(get_owner_of_path "$config_dir")
+  fi
+
+  if [[ -z "$datacenter" ]]; then
+    datacenter=$(get_instance_region)
+  fi
+
+
+  if [[ "$skip_consul_config" == "true" ]]; then
+    log_info "The --skip-consul-config flag is set, so will not generate a default Consul config file."
+  else
+    generate_consul_config "$server" "$config_dir" "$user" "$cluster_tag" "$cluster_size" "$organization" "$token" "$datacenter"
+  fi
+
+  generate_supervisor_config "$SUPERVISOR_CONFIG_PATH" "$config_dir" "$data_dir" "$log_dir" "$bin_dir" "$user"
+  start_consul
+}
+
+run "$@"
