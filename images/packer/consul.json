@@ -41,8 +41,8 @@
     },
     {
       "type": "ansible-local",
-      "playbook_dir": "./ansible",
-      "playbook_file": "./ansible/consul.yml"
+      "playbook_dir": "{{template_dir}}/../ansible/consul",
+      "playbook_file": "{{template_dir}}/../ansible/consul/playbook.yml"
     },
     {
       "type": "shell",

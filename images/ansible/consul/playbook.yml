@@ -36,7 +36,7 @@
 
     - name: "Copy supervisor config"
       template:
-        src: "./consul/supervisor.conf.j2"
+        src: "./supervisor.conf.j2"
         dest: "{{ SUPERVISOR_CONF_DIR }}/supervisor.conf"
 
     - name: "Enable supervisor service"
@@ -87,7 +87,7 @@
 
     - name: "Copy run-consul config"
       template:
-        src: "./consul/run-consul.j2"
+        src: "./run-consul.j2"
         dest: "{{ CONSUL_DIR_BIN_RUN_CONSUL }}"
         owner: "{{CONSUL_USER}}"
         group: "{{CONSUL_USER}}"
