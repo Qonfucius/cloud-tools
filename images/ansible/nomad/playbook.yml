@@ -1,0 +1,92 @@
+---
+- hosts: localhost
+  vars:
+    SUPERVISOR_DIR: "/etc/supervisor"
+    SUPERVISOR_CONF_DIR: "{{ SUPERVISOR_DIR }}/conf.d"
+    NOMAD_USER: "nomad"
+    SYSTEM_BIN_DIR: "/usr/local/bin"
+    NOMAD_DIR: "/opt/nomad"
+    NOMAD_DIR_BIN: "{{NOMAD_DIR}}/bin"
+    NOMAD_DIR_BIN_NOMAD: "{{NOMAD_DIR_BIN}}/nomad"
+    NOMAD_DIR_BIN_RUN_NOMAD: "{{NOMAD_DIR_BIN}}/run-nomad"
+    NOMAD_VERSION: "0.8.4"
+    NOMAD_PLATEFORM: "linux"
+    NOMAD_ARCH: "amd64"
+    NOMAD_DOWNLOAD_URL: "https://releases.hashicorp.com/nomad/{{NOMAD_VERSION}}/nomad_{{NOMAD_VERSION}}_{{NOMAD_PLATEFORM}}_{{NOMAD_ARCH}}.zip"
+    METADATA_URL: "http://169.254.42.42"
+  tasks:
+    - name: "Upgrade package manager"
+      apt: upgrade=dist
+
+    - name: "Install list of packages"
+      apt: name={{item}} state=present
+      with_items:
+        - curl
+        - unzip
+        - jq
+        - supervisor
+
+    - name: "Create directory if they don't exist"
+      file:
+        path: "{{ SUPERVISOR_CONF_DIR }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0775
+
+    - name: "Copy supervisor config"
+      template:
+        src: "./supervisor.conf.j2"
+        dest: "{{ SUPERVISOR_CONF_DIR }}/supervisor.conf"
+
+    - name: "Enable supervisor service"
+      service: name=supervisor enabled=yes
+
+    - name: "Start supervisor service"
+      service: name=supervisor state=started
+
+    - name: "Create user"
+      user:
+        name: "{{NOMAD_USER}}"
+        state: present
+
+    - name: "Create directory if they don't exist"
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{NOMAD_USER}}"
+        group: "{{NOMAD_USER}}"
+        mode: 0775
+      with_items:
+        - "{{ NOMAD_DIR_BIN }}"
+        - "{{ NOMAD_DIR }}/config"
+        - "{{ NOMAD_DIR }}/data"
+        - "{{ NOMAD_DIR }}/log"
+
+    - name: "Unarchive nomad"
+      unarchive:
+        src: "{{NOMAD_DOWNLOAD_URL}}"
+        dest: "/tmp"
+        remote_src: yes
+
+    - name: "Copy nomad"
+      copy:
+        src: "/tmp/nomad"
+        dest: "{{NOMAD_DIR_BIN_NOMAD}}"
+        owner: "{{NOMAD_USER}}"
+        group: "{{NOMAD_USER}}"
+        mode: 0744
+
+    - name: "Create nomad symlink"
+      file:
+        src: "{{NOMAD_DIR_BIN_NOMAD}}"
+        dest: "{{SYSTEM_BIN_DIR}}/nomad"
+        state: link
+
+    - name: "Copy run-nomad config"
+      template:
+        src: "./run-nomad.j2"
+        dest: "{{ NOMAD_DIR_BIN_RUN_NOMAD }}"
+        owner: "{{NOMAD_USER}}"
+        group: "{{NOMAD_USER}}"
+        mode: 0744
