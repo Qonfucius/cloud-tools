@@ -1,0 +1,31 @@
+---
+- hosts: localhost
+  tasks:
+    - name: "Upgrade package manager"
+      apt: upgrade=dist
+
+    - name: "Install list of packages"
+      apt: name={{item}} state=present
+      with_items:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - gnupg2
+        - software-properties-common
+
+    - name: "Add Docker Apt signing key, will not download if present"
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+
+    - name: Fetch debian distrib
+      command: lsb_release -cs
+      register: debian_distrib
+
+    - name: "Add Docker repository"
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/debian {{debian_distrib.stdout}} stable
+        state: present
+
+    - name: "Install docker"
+      apt: name=docker-ce state=present update_cache=yes
