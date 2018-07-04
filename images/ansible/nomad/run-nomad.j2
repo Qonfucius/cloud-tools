@@ -104,6 +104,8 @@ function generate_nomad_config {
   local readonly num_servers="$3"
   local readonly config_dir="$4"
   local readonly user="$5"
+  local readonly exposed_meta="$6"
+  local readonly with_raw="$7"
   local readonly config_path="$config_dir/$NOMAD_CONFIG_FILE"
 
   local instance_id=""
@@ -127,11 +129,34 @@ EOF
 )
   fi
 
+
+  local meta=""
+  if [[ -n "$exposed_meta" ]]; then
+    meta=$(cat <<EOF
+  meta {
+    exposed = "$exposed_meta"
+  }
+EOF
+)
+  fi
+
+  local driver_raw_exec=""
+  if [[ "$with_raw" == "true" ]]; then
+    driver_raw_exec=$(cat <<EOF
+  "driver.raw_exec.enable" = "1"
+EOF
+)
+  fi
+
   local client_config=""
   if [[ "$client" == "true" ]]; then
     client_config=$(cat <<EOF
 client {
   enabled = true
+  options = {
+    $driver_raw_exec
+  }
+  $meta
 }
 EOF
 )
@@ -212,6 +237,8 @@ function run {
   local user=""
   local skip_nomad_config="false"
   local use_sudo=""
+  local with_raw=""
+  local exposed_meta=""
   local all_args=()
 
   while [[ $# > 0 ]]; do
@@ -273,6 +300,14 @@ function run {
         print_usage
         exit
         ;;
+       --exposed)
+        assert_not_empty "$key" "$2"
+        exposed_meta="$2"
+        shift
+        ;;
+        --with-raw)
+        with_raw="true"
+        ;;
       *)
         log_error "Unrecognized argument: $key"
         print_usage
@@ -324,7 +359,7 @@ function run {
   if [[ "$skip_nomad_config" == "true" ]]; then
     log_info "The --skip-nomad-config flag is set, so will not generate a default Nomad config file."
   else
-    generate_nomad_config "$server" "$client" "$num_servers" "$config_dir" "$user"
+    generate_nomad_config "$server" "$client" "$num_servers" "$config_dir" "$user" "$exposed_meta" "$with_raw"
   fi
 
   generate_supervisor_config "$SUPERVISOR_CONFIG_PATH" "$config_dir" "$data_dir" "$bin_dir" "$log_dir" "$user" "$use_sudo"
