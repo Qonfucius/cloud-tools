@@ -17,11 +17,13 @@ data "scaleway_image" "consulImage" {
 }
 
 resource "scaleway_server" "consulServer" {
-  name  = "consul-node-${count.index + 1}"
+  name  = "${var.cluster_name}-${count.index + 1}"
   image = "${data.scaleway_image.consulImage.id}"
   type  = "${var.instance_type}"
   count = "${var.cluster_size}"
   tags = ["${var.cluster_tag}"]
+
+  dynamic_ip_required = true
 
   connection {
     type         = "ssh"
@@ -38,7 +40,14 @@ resource "scaleway_server" "consulServer" {
 
   provisioner "remote-exec" {
     inline = [
-    "/opt/consul/bin/run-consul --server --cluster-size ${var.cluster_size} --cluster-tag ${var.cluster_tag} --organization ${var.scw_organization} --token ${var.scw_token}"
+      <<EOC
+        /opt/consul/bin/run-consul \
+          --server \
+          --cluster-size ${var.cluster_size} \
+          --cluster-tag ${var.cluster_tag} \
+          --organization ${var.scw_organization} \
+          --token ${var.scw_token}
+      EOC
     ]
   }
 }
