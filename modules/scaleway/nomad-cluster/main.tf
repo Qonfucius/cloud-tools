@@ -5,7 +5,7 @@ terraform {
 
 
 provider "scaleway" {
-  version = "~> 1.4.1"
+  version = "~> 1.5.0"
   organization = "${var.scw_organization}"
   token        = "${var.scw_token}"
   region       = "${var.scw_region}"
@@ -23,6 +23,8 @@ resource "scaleway_server" "nomadServer" {
   count = "${var.cluster_size}"
   tags = ["${var.cluster_tag}"]
   dynamic_ip_required = true
+
+  security_group      = "${var.instance_security_group}"
 
   connection {
     type         = "ssh"

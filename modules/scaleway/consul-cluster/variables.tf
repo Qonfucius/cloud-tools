@@ -31,11 +31,6 @@ variable "scw_organization" {
   description = "Scaleway organization access key"
 }
 
-variable "scw_region" {
-  description = "Region for cluster"
-  default     = "par1"
-}
-
 variable "image_name" {
   description = "Image name to match for deployment (please build image with packer)"
 }
@@ -46,4 +41,9 @@ variable "bastion_host" {
 
 variable "bastion_private_key" {
   description = "Used to ssh from jump host to other hosts without password"
+}
+
+variable "instance_security_group" {
+  description = "Security group"
+  default = false
 }

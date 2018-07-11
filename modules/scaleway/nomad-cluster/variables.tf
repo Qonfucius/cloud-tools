@@ -68,3 +68,7 @@ variable "nomad_role" {
   type = "string"
 }
 
+variable "instance_security_group" {
+  description = "Security group"
+  default = false
+}

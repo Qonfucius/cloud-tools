@@ -3,14 +3,6 @@ terraform {
   required_version = ">= 0.11.7"
 }
 
-
-provider "scaleway" {
-  version = "~> 1.4.1"
-  organization = "${var.scw_organization}"
-  token        = "${var.scw_token}"
-  region       = "${var.scw_region}"
-}
-
 data "scaleway_image" "consulImage" {
   architecture = "${var.instance_arch}"
   name_filter = "${var.image_name}"
@@ -24,6 +16,8 @@ resource "scaleway_server" "consulServer" {
   tags = ["${var.cluster_tag}"]
 
   dynamic_ip_required = true
+
+  security_group      = "${var.instance_security_group}"
 
   connection {
     type         = "ssh"
