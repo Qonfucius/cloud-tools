@@ -1,0 +1,47 @@
+---
+- hosts: localhost
+  vars:
+    db_password: "foo"
+  tasks:
+    - name: "Upgrade package manager"
+      apt: upgrade=dist
+
+    - name: "Install list of packages"
+      apt: name={{item}} state=present
+      with_items:
+        - apt-transport-https
+        - ca-certificatesv
+        - curl
+        - gnupg2
+        - software-properties-common
+
+    - name: "Add arangodb Apt signing key, will not download if present"
+      apt_key:
+        url: https://download.arangodb.com/arangodb33/Debian_9.0/Release.key
+        state: present
+
+    - name: "Add arango repository"
+      apt_repository:
+        repo: deb https://download.arangodb.com/arangodb33/Debian_9.0/ /
+        state: present
+
+    - name: "Set root password"
+      debconf:
+        name: arangodb3
+        question: arangodb3/password
+        value: {{db_password}}
+        vtype: password
+
+    - name: "Set root password (confirm)"
+      debconf:
+        name: arangodb3
+        question: arangodb3/password_again
+        value: {{db_password}}
+        vtype: password
+
+
+    - name: "Install arangodb"
+      apt: name=arangodb3 state=present update_cache=yes
+
+    - name: Ensure the arangodb service is running
+      service: name=arangodb3 state=started enabled=yes

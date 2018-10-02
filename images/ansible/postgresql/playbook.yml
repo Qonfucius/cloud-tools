@@ -1,0 +1,14 @@
+---
+- hosts: localhost
+  tasks:
+    - name: "Upgrade package manager"
+      apt: upgrade=dist
+
+    - name: "Install list of packages"
+      apt: name={{item}} state=present
+      with_items:
+        - postgresql
+        - postgresql-contrib
+
+    - name: Ensure the PostgreSQL service is running
+      service: name=postgresql state=started enabled=yes
