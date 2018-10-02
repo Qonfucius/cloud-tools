@@ -1,8 +1,4 @@
 {
-  "variables": {
-    "scw_access_key": "{{env `SCW_ORGANIZATION`}}",
-    "scw_token": "{{env `SCW_TOKEN`}}"
-  },
   "builders": [
     {
       "name": "scaleway_PAR1_START1S",
@@ -10,8 +6,6 @@
       "image_name": "packer_arangodb_START1S_{{isotime \"2006-01-02_15-04-05\"}}",
       "snapshot_name": "packer_arangodb_START1S_{{isotime \"2006-01-02_15-04-05\"}}",
       "type": "scaleway",
-      "api_access_key": "{{user `scw_access_key`}}",
-      "api_token": "{{user `scw_token`}}",
       "region": "par1",
       "image": "bb85d69d-0104-4ee5-8722-e2f354d96e8b",
       "commercial_type": "START1-S",
@@ -43,12 +37,6 @@
       "type": "ansible-local",
       "playbook_dir": "{{template_dir}}/../ansible/arangodb",
       "playbook_file": "{{template_dir}}/../ansible/arangodb/playbook.yml"
-    },
-    {
-      "type": "shell",
-      "inline": [
-        "sync"
-      ]
     }
   ]
 }
